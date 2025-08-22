@@ -1,0 +1,130 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+from openai import OpenAI
+import json
+
+# --- Initialize OpenAI ---
+client = OpenAI()
+
+# --- Streamlit Config ---
+st.set_page_config(page_title="GenBI Assistant", layout="wide")
+
+st.title("📊 GenBI Assistant")
+st.caption("Conversational BI Assistant powered by LLM + Tableau Agent")
+
+# --- Sidebar Controls ---
+st.sidebar.header("⚙️ Model Settings")
+model = st.sidebar.selectbox("Choose Model", ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"])
+temperature = st.sidebar.slider("Creativity (temperature)", 0.0, 1.5, 0.7, 0.1)
+
+# --- Session State for Chat ---
+if "messages" not in st.session_state:
+    st.session_state["messages"] = []
+
+# --- LLM Helper ---
+def ask_llm(messages, model, temperature):
+    resp = client.chat.completions.create(
+        model=model,
+        temperature=temperature,
+        messages=messages
+    )
+    return resp.choices[0].message.content
+
+# --- BI Plan Extraction ---
+def get_bi_plan(user_query, json_data, history):
+    """
+    Extract BI plan by sending user query + last 5 conversation turns
+    to the LLM along with JSON data.
+    """
+    system_prompt = """
+    You are a Business Intelligence assistant.
+    You interpret user queries in the context of the JSON data provided
+    by the Tableau Agent. Always return a structured JSON response.
+
+    Respond ONLY in JSON with this schema:
+    {
+      "explanation": "short explanation of the result",
+      "output_type": "text | table | chart",
+      "chart_type": "bar | line | pie | scatter | histogram | none",
+      "x": "x-axis field or null",
+      "y": "y-axis field or null",
+      "columns": ["col1","col2"]   // if output_type = table, else []
+    }
+    """
+
+    # Keep only last 5 turns (user + assistant)
+    recent_history = history[-10:]  
+
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(recent_history)
+    messages.append({
+        "role": "user",
+        "content": f"User query: {user_query}\nJSON data: {json_data}"
+    })
+
+    raw_response = ask_llm(messages, model, temperature)
+    return json.loads(raw_response)
+
+# --- Simulated Tableau Agent (replace with real LangChain tool call) ---
+def tableau_agent(user_query: str) -> str:
+    """
+    Replace this with actual LangChain Tableau Agent call.
+    Should return JSON string as response.
+    For now, simulate with static data.
+    """
+    sample_json = [
+        {"product": "A", "sales": 120, "region": "East"},
+        {"product": "B", "sales": 95, "region": "West"},
+        {"product": "C", "sales": 60, "region": "East"},
+        {"product": "D", "sales": 30, "region": "South"}
+    ]
+    return json.dumps(sample_json)
+
+# --- Chat Input (sticky at bottom like ChatGPT) ---
+if user_query := st.chat_input("Ask me anything about your data..."):
+    # Step 1: Get JSON from Tableau Agent
+    json_data = tableau_agent(user_query)
+
+    # Step 2: Get BI Plan with context (last 5 turns)
+    plan = get_bi_plan(user_query, json_data, st.session_state["messages"])
+
+    # Step 3: Process output
+    response = {"role": "assistant", "content": plan["explanation"], "chart": None, "table": None}
+
+    try:
+        data = pd.read_json(json_data)
+
+        if plan["output_type"] == "chart" and plan["chart_type"] != "none":
+            if plan["chart_type"] == "bar":
+                fig = px.bar(data, x=plan["x"], y=plan["y"], title=user_query)
+            elif plan["chart_type"] == "line":
+                fig = px.line(data, x=plan["x"], y=plan["y"], title=user_query, markers=True)
+            elif plan["chart_type"] == "pie":
+                fig = px.pie(data, names=plan["x"], values=plan["y"], title=user_query)
+            elif plan["chart_type"] == "scatter":
+                fig = px.scatter(data, x=plan["x"], y=plan["y"], title=user_query)
+            elif plan["chart_type"] == "histogram":
+                fig = px.histogram(data, x=plan["y"], title=user_query)
+            response["chart"] = fig
+
+        elif plan["output_type"] == "table" and plan["columns"]:
+            response["table"] = data[plan["columns"]]
+
+    except Exception as e:
+        response["content"] += f"\n\n(Note: Could not render chart/table. Error: {e})"
+
+    # Save conversation
+    st.session_state["messages"].append({"role": "user", "content": user_query})
+    st.session_state["messages"].append(response)
+
+# --- Display Conversation (scrolling chat UI) ---
+for msg in st.session_state["messages"]:
+    if msg["role"] == "user":
+        st.chat_message("user").write(msg["content"])
+    else:
+        st.chat_message("assistant").write(msg["content"])
+        if msg.get("chart"):
+            st.plotly_chart(msg["chart"], use_container_width=True)
+        if msg.get("table") is not None:
+            st.dataframe(msg["table"])
