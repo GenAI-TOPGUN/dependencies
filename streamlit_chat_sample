@@ -1,0 +1,111 @@
+import streamlit as st
+import pandas as pd
+import matplotlib.pyplot as plt
+from openai import OpenAI
+import json
+
+# --- Initialize OpenAI ---
+client = OpenAI()
+
+# --- Streamlit Config ---
+st.set_page_config(page_title="GenBI Assistant", layout="wide")
+
+st.title("📊 GenBI Assistant")
+st.caption("Conversational Business Intelligence powered by LLM + Visualization")
+
+# --- Sidebar Controls ---
+st.sidebar.header("⚙️ Model Settings")
+model = st.sidebar.selectbox("Choose Model", ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"])
+temperature = st.sidebar.slider("Creativity (temperature)", 0.0, 1.5, 0.7, 0.1)
+
+# --- Chat history ---
+if "messages" not in st.session_state:
+    st.session_state["messages"] = []
+
+# --- Helper Functions ---
+def ask_llm(prompt, model, temperature):
+    resp = client.chat.completions.create(
+        model=model,
+        temperature=temperature,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return resp.choices[0].message.content
+
+def get_bi_plan(user_query, json_data):
+    prompt = f"""
+    You are a Business Intelligence assistant. Interpret the user query in context of the JSON data.
+
+    Respond ONLY in JSON with this structure:
+    {{
+      "explanation": "text explanation of the result",
+      "output_type": "text | table | chart",
+      "chart_type": "bar | line | pie | scatter | histogram | none",
+      "x": "x-axis field or null",
+      "y": "y-axis field or null",
+      "columns": ["col1","col2"]   // if output_type = table, else []
+    }}
+
+    User query: {user_query}
+    JSON data: {json_data}
+    """
+    return json.loads(ask_llm(prompt, model, temperature))
+
+# --- User Input ---
+st.subheader("Ask your data a question 💬")
+
+with st.form(key="chat_form", clear_on_submit=True):
+    user_query = st.text_input("Enter your question:")
+    json_input = st.text_area("Paste your JSON data:")
+    submit = st.form_submit_button("Ask")
+
+if submit and user_query and json_input:
+    plan = get_bi_plan(user_query, json_input)
+
+    # Store user message
+    st.session_state["messages"].append({"role": "user", "content": user_query})
+
+    # Try to parse JSON
+    fig = None
+    table_data = None
+    try:
+        data = pd.read_json(json_input)
+
+        if plan["output_type"] == "chart" and plan["chart_type"] != "none":
+            fig, ax = plt.subplots(figsize=(7,4))
+            if plan["chart_type"] == "bar":
+                ax.bar(data[plan["x"]], data[plan["y"]])
+            elif plan["chart_type"] == "line":
+                ax.plot(data[plan["x"]], data[plan["y"]], marker="o")
+            elif plan["chart_type"] == "pie":
+                ax.pie(data[plan["y"]], labels=data[plan["x"]], autopct="%1.1f%%")
+            elif plan["chart_type"] == "scatter":
+                ax.scatter(data[plan["x"]], data[plan["y"]])
+            elif plan["chart_type"] == "histogram":
+                ax.hist(data[plan["y"]], bins=10)
+            ax.set_title(user_query)
+
+        elif plan["output_type"] == "table" and plan["columns"]:
+            table_data = data[plan["columns"]]
+
+    except Exception as e:
+        plan["explanation"] += f"\n\n(Note: Could not parse data/chart. Error: {e})"
+
+    # Store assistant reply
+    st.session_state["messages"].append({
+        "role": "assistant",
+        "content": plan["explanation"],
+        "chart": fig,
+        "table": table_data
+    })
+
+# --- Display Conversation ---
+st.subheader("Conversation History")
+for msg in st.session_state["messages"]:
+    if msg["role"] == "user":
+        st.chat_message("user").write(msg["content"])
+    else:
+        st.chat_message("assistant").write(msg["content"])
+        if msg.get("chart"):
+            st.pyplot(msg["chart"])
+        if msg.get("table") is not None:
+            st.dataframe(msg["table"])
