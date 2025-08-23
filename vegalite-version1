@@ -1,0 +1,154 @@
+import os, re, json
+import streamlit as st
+from typing import Any, Dict, Optional
+from openai import OpenAI
+
+# --- Page Config ---
+st.set_page_config(page_title="GenBi Assistant", layout="wide")
+st.markdown("<h1>GenBi Assistant</h1>", unsafe_allow_html=True)
+st.write("Paste your JSON dataset and ask questions—I'll explain or visualize as needed.")
+
+# --- Sidebar: LLM Settings ---
+with st.sidebar:
+    st.header("LLM Configuration")
+    api_key = st.text_input("OpenAI API Key", type="password", value=os.getenv("OPENAI_API_KEY", ""))
+    model = st.text_input("Model (e.g., gpt-4)", value=os.getenv("OPENAI_MODEL", "gpt-4"))
+    temp = st.slider("Temperature", 0.0, 1.0, 0.2, 0.05)
+    max_toks = st.slider("Max Tokens", 128, 2048, 1024, 64)
+    st.markdown("---")
+    st.caption("Response format always JSON with keys: spec, explanation.")
+
+if not api_key:
+    st.warning("Please enter OpenAI API Key to continue.")
+    st.stop()
+
+# --- Helper Functions ---
+def extract_json_object(text: str) -> Optional[Dict[str, Any]]:
+    """Extract the first JSON-like object in the text."""
+    m = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group())
+    except json.JSONDecodeError:
+        return None
+
+SYSTEM_PROMPT = """
+You are GenBi, a powerful BI assistant. Always respond with JSON only:
+{
+  "spec": <Vega-Lite JSON or null>,
+  "explanation": <string summary or reason>
+}
+
+Examples:
+NL: "Summarize key insights."
+{
+  "spec": null,
+  "explanation": "Average sales rose steadily last quarter, with East leading growth."
+}
+
+NL: "List attributes."
+{
+  "spec": null,
+  "explanation": "Fields available: region, salesperson, month, sales."
+}
+
+NL: "Show total sales per region."
+{
+  "spec": {
+    "mark": "bar",
+    "encoding": {
+      "x": {"field":"region","type":"nominal"},
+      "y": {"field":"sales","type":"quantitative"}
+    },
+    "data": {"values":[ /* user data */ ]}
+  },
+  "explanation": "Bar chart of total sales by region."
+}
+
+NL: "Show trend of sales over time."
+{
+  "spec": {
+    "mark": "line",
+    "encoding": {
+      "x": {"field":"month","type":"temporal"},
+      "y": {"field":"sales","type":"quantitative"}
+    },
+    "data": {"values":[ /* user data */ ]}
+  },
+  "explanation": "Line chart showing sales trend over time."
+}
+
+NL: "Change the previous to a line chart by region."
+{
+  "spec": {
+    "mark": "line",
+    "encoding": {
+      "x": {"field":"month","type":"temporal"},
+      "y": {"field":"sales","type":"quantitative"},
+      "color": {"field":"region","type":"nominal"}
+    },
+    "data": {"values":[ /* user data */ ]}
+  },
+  "explanation": "Line chart showing sales trend broken down by region."
+}
+
+Now, given JSON data and user question, reply in this format.
+"""
+
+# --- Setup conversation state ---
+if "messages" not in st.session_state:
+    st.session_state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+# Sidebar: Show last 5 messages
+with st.sidebar.expander("Last 5 messages"):
+    for m in st.session_state.messages[-5:]:
+        role = m["role"]
+        content = m["content"]
+        st.write(f"**{role}:** {content[:200]}{'...' if len(content)>200 else ''}")
+
+# --- Input fields ---
+data_input = st.text_area("JSON Data (array) — required", height=200, value=st.session_state.get("last_data", ""))
+question = st.chat_input("Your question (e.g. 'List attributes', 'Show sales trend')")
+
+parsed_data = None
+if data_input:
+    try:
+        parsed_data = json.loads(data_input)
+        st.session_state.last_data = data_input
+    except Exception as e:
+        st.error(f"Invalid JSON: {e}")
+
+# --- Handle user prompt ---
+if question and parsed_data is not None:
+    st.session_state.messages.append({"role":"user", "content": f"DATA:\n{data_input}\nQUESTION:\n{question}"})
+
+    with st.chat_message("assistant"):
+        client = OpenAI(api_key=api_key)
+        resp = client.chat.completions.create(
+            model=model,
+            messages=st.session_state.messages[-6:],  # last 6 for context
+            temperature=temp,
+            max_tokens=max_toks
+        )
+        text = resp.choices[0].message.content
+        st.write(text)  # show raw JSON for transparency
+
+        result = extract_json_object(text)
+        if result and "spec" in result and "explanation" in result:
+            spec = result["spec"]
+            explanation = result["explanation"]
+            if spec:
+                st.vega_lite_chart(spec, use_container_width=True)  # Render chart
+            st.markdown(f"**Explanation**: {explanation}")
+        else:
+            st.error("Response did not match the expected format. Expecting JSON with keys 'spec' and 'explanation'.")
+
+        st.session_state.messages.append({"role":"assistant", "content": text})
+
+# --- Conversation history for UX ---
+st.markdown("---\n### Conversation History")
+for m in st.session_state.messages[1:]:
+    role = m["role"]
+    content = m["content"]
+    st.markdown(f"**{role}:** {content[:300]}{'...' if len(content)>300 else ''}")
