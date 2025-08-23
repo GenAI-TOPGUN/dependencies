@@ -1,0 +1,195 @@
+import os
+import json
+import re
+import streamlit as st
+from typing import Any, Dict, Optional
+from openai import OpenAI
+
+# --- Page Configuration ---
+st.set_page_config(page_title="GenBi Assistant", layout="wide")
+st.markdown("<h1>GenBi Assistant</h1>", unsafe_allow_html=True)
+st.write("Your BI assistant for analyzing JSON data and creating visualizations.")
+
+# --- Helper Functions ---
+def extract_json_object(text: str) -> Optional[Dict[str, Any]]:
+    """Extracts the first JSON-like object from a string."""
+    try:
+        match = re.search(r"\{[\s\S]*\}", text)
+        if match:
+            return json.loads(match.group(0))
+    except json.JSONDecodeError:
+        pass
+    return None
+
+def get_llm_response(
+    prompt: str, 
+    data: list, 
+    conversation_history: list, 
+    openai_api_key: str, 
+    model_name: str, 
+    temperature: float, 
+    max_tokens: int
+) -> Optional[Dict[str, Any]]:
+    """Sends a query to the LLM and processes the JSON response."""
+    client = OpenAI(api_key=openai_api_key)
+    
+    # Append the user's data and question to the conversation history for the LLM
+    user_message = f"DATA:\n{json.dumps(data, indent=2)}\nQUESTION:\n{prompt}"
+    
+    # We only send the system prompt and the user's latest query to minimize context and cost
+    # For conversational flow, you can append previous messages if needed.
+    messages_to_send = conversation_history + [{"role": "user", "content": user_message}]
+    
+    try:
+        resp = client.chat.completions.create(
+            model=model_name,
+            messages=messages_to_send,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format={"type": "json_object"}  # Enforce JSON output from the LLM
+        )
+        response_text = resp.choices[0].message.content
+        return json.loads(response_text)
+    except json.JSONDecodeError:
+        st.error("The LLM's response was not valid JSON. Please try again.")
+    except Exception as e:
+        st.error(f"An error occurred with the OpenAI API: {e}")
+    return None
+
+# --- Application Logic ---
+# Sidebar for LLM settings
+with st.sidebar:
+    st.header("LLM Configuration")
+    api_key = st.text_input("OpenAI API Key", type="password", value=os.getenv("OPENAI_API_KEY", ""))
+    model = st.text_input("Model (e.g., gpt-4o)", value=os.getenv("OPENAI_MODEL", "gpt-4o"))
+    temp = st.slider("Temperature", 0.0, 1.0, 0.2, 0.05)
+    max_toks = st.slider("Max Tokens", 128, 2048, 1024, 64)
+    st.markdown("---")
+    st.caption("Response format: JSON with `spec` and `explanation` keys.")
+    if st.button("Clear Chat"):
+        st.session_state.messages = []
+        st.session_state.last_data = ""
+        st.experimental_rerun()
+
+if not api_key:
+    st.warning("Please enter your OpenAI API Key to continue.")
+    st.stop()
+
+# Initialize session state for conversation history and data
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "last_data" not in st.session_state:
+    st.session_state.last_data = ""
+
+# Define the system prompt once
+SYSTEM_PROMPT = """
+You are GenBi, a powerful BI assistant. Your goal is to help users understand their data by providing explanations or creating visualizations.
+
+You must **always** respond with a valid JSON object following this schema:
+{
+  "spec": <Vega-Lite JSON object or null>,
+  "explanation": <string summary or reason>
+}
+
+**Rules:**
+1.  **For visualization requests**, return a valid Vega-Lite JSON object in the "spec" field and a brief description in the "explanation" field. You must include the data with the "values" key.
+2.  **For requests that do not require a chart** (e.g., summaries, greetings, or listing fields), set "spec" to `null` and provide the full response in the "explanation" field.
+3.  **Always** be concise and to the point.
+
+**Examples:**
+- User: "Summarize key insights."
+- Response: `{"spec": null, "explanation": "Average sales rose steadily, with the East region leading growth."}`
+
+- User: "Show total sales per region."
+- Response: `{"spec": {"mark": "bar", "encoding": {"x": {"field": "region", "type": "nominal"}, "y": {"field": "sales", "type": "quantitative"}}}, "explanation": "Bar chart showing total sales by region."}`
+
+- User: "What fields are available?"
+- Response: `{"spec": null, "explanation": "Fields available: region, product, sales, date."}`
+
+- User: "Change the last chart to a line chart by region."
+- Response: `{"spec": {"mark": "line", "encoding": {"x": {"field": "date", "type": "temporal"}, "y": {"field": "sales", "type": "quantitative"}, "color": {"field": "region", "type": "nominal"}}}, "explanation": "Line chart showing sales trend broken down by region."}`
+"""
+st.session_state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+# Display chat messages from history on app rerun
+for message in st.session_state.messages:
+    if message["role"] == "user":
+        with st.chat_message("user"):
+            st.markdown(message["content"])
+    elif message["role"] == "assistant":
+        content = message["content"]
+        if content.startswith('{'):
+            try:
+                # Try to parse and render JSON for previous assistant messages
+                json_content = json.loads(content)
+                spec = json_content.get("spec")
+                explanation = json_content.get("explanation")
+                
+                with st.chat_message("assistant"):
+                    if spec and "data" in spec:
+                        st.vega_lite_chart(spec, use_container_width=True)
+                    st.markdown(f"**Explanation**: {explanation}")
+            except (json.JSONDecodeError, TypeError):
+                # Fallback to plain text if JSON is malformed
+                with st.chat_message("assistant"):
+                    st.markdown(content)
+        else:
+            with st.chat_message("assistant"):
+                st.markdown(content)
+
+# --- Input Fields ---
+data_input = st.text_area("1. Paste JSON Data (array of objects)", height=150, value=st.session_state.last_data)
+question = st.chat_input("2. Ask a question (e.g., 'Show sales trend over time')")
+
+# --- Main Logic on user input ---
+if question:
+    if not data_input:
+        st.error("Please paste your JSON data first.")
+        st.stop()
+        
+    try:
+        parsed_data = json.loads(data_input)
+        if not isinstance(parsed_data, list) or not all(isinstance(item, dict) for item in parsed_data):
+            st.error("Invalid JSON format. Please enter a valid JSON array of objects.")
+            st.stop()
+        st.session_state.last_data = data_input
+    except json.JSONDecodeError as e:
+        st.error(f"Invalid JSON data: {e}.")
+        st.stop()
+        
+    # Add user question to history and display
+    st.session_state.messages.append({"role": "user", "content": question})
+    with st.chat_message("user"):
+        st.markdown(question)
+
+    with st.chat_message("assistant"):
+        with st.spinner("Analyzing data..."):
+            llm_response_json = get_llm_response(
+                prompt=question,
+                data=parsed_data,
+                conversation_history=st.session_state.messages,
+                openai_api_key=api_key,
+                model_name=model,
+                temperature=temp,
+                max_tokens=max_toks
+            )
+        
+        if llm_response_json:
+            spec = llm_response_json.get("spec")
+            explanation = llm_response_json.get("explanation")
+
+            if spec and isinstance(spec, dict):
+                # Programmatically inject the data into the Vega-Lite spec
+                spec["data"] = {"values": parsed_data}
+                
+                try:
+                    st.vega_lite_chart(spec, use_container_width=True)
+                except Exception as vega_err:
+                    st.error(f"Failed to render chart: {vega_err}")
+                    st.markdown(f"**Explanation**: {explanation}")
+            
+            st.markdown(f"**Explanation**: {explanation}")
+
+            # Append the full JSON response to the chat history for context
+            st.session_state.messages.append({"role": "assistant", "content": json.dumps(llm_response_json, indent=2)})
+
