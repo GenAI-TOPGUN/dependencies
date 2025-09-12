@@ -1,14 +1,22 @@
-from typing import List, Dict
-from langchain.schema import HumanMessage, SystemMessage, AIMessage
+from typing import List, Dict, Any, Optional
+from langchain.schema import HumanMessage, AIMessage, SystemMessage, BaseMessage
 from langchain.chat_models.base import BaseChatModel
-from langchain.core.schema import ChatResult, ChatGeneration
+from langchain.prompts.chat import ChatPromptValue
+from langchain.schema import ChatResult, ChatGeneration
 import requests
 import os
 
 class CustomLlamaEndpointChat(BaseChatModel):
-    """A custom chat model to call a LLaMA API endpoint with custom headers."""
+    """Chat model wrapper for a LLaMA endpoint with custom headers/endpoint."""
 
-    def __init__(self, endpoint_url: str, api_key: str, auth_group: str = None, model_name: str = None, temperature: float = 0.7):
+    def __init__(
+        self,
+        endpoint_url: str,
+        api_key: str,
+        auth_group: Optional[str] = None,
+        model_name: Optional[str] = None,
+        temperature: float = 0.7,
+    ):
         self.endpoint_url = endpoint_url
         self.api_key = api_key
         self.auth_group = auth_group
@@ -20,7 +28,7 @@ class CustomLlamaEndpointChat(BaseChatModel):
         return "custom_llama"
 
     @property
-    def _identifying_params(self) -> Dict[str, any]:
+    def _identifying_params(self) -> Dict[str, Any]:
         return {
             "endpoint_url": self.endpoint_url,
             "model_name": self.model_name,
@@ -28,20 +36,22 @@ class CustomLlamaEndpointChat(BaseChatModel):
             "auth_group": self.auth_group
         }
 
-    def _call(self, messages: List[Dict], **kwargs) -> ChatResult:
+    def _call(self, messages: List[Dict[str, str]], **kwargs: Any) -> ChatResult:
         """
-        messages: list of dicts with 'role' and 'content'
+        Expects messages in list of dicts: {"role": ..., "content": ...}
+        Returns ChatResult with appropriate formatting.
         """
-
         payload = {
             "model": self.model_name,
             "messages": messages,
             "temperature": self.temperature,
-            **kwargs
         }
+        # merge in additional kwargs if any
+        payload.update(kwargs)
+
         headers = {
             "Content-Type": "application/json",
-            "X-API-KEY": self.api_key
+            "X-API-KEY": self.api_key,
         }
         if self.auth_group:
             headers["X-AUTH-GROUP"] = self.auth_group
@@ -49,13 +59,22 @@ class CustomLlamaEndpointChat(BaseChatModel):
         resp = requests.post(self.endpoint_url, json=payload, headers=headers, timeout=30)
         resp.raise_for_status()
         j = resp.json()
-        # You will need to adapt depending on the API's response schema
-        # Suppose it returns {"choices": [...]} similar to OpenAI
-        content = j["choices"][0]["message"]["content"]
-        # wrap
-        message = AIMessage(content=content)
-        generation = ChatGeneration(message=message)
-        return ChatResult(generations=[[generation]], llm_output=j)
+
+        # --- IMPORTANT: adapt based on your endpoint's response structure ---
+        # Example assumption: similar to OpenAI: {"choices": [{"message": {"content": ...}}], ...}
+        try:
+            content = j["choices"][0]["message"]["content"]
+        except Exception as e:
+            # fallback if different schema
+            # maybe your endpoint uses "outputs" or "response" instead of "message"
+            content = j.get("response") or j.get("output") or str(j)
+        
+        ai_message = AIMessage(content=content)
+
+        return ChatResult(
+            generations=[[ChatGeneration(message=ai_message)]],
+            llm_output=j
+        )
 
 
 
