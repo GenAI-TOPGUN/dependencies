@@ -117,40 +117,51 @@ def select_model(provider: str = "openai", model_name: str = None, temperature: 
 # backend/json_normalizer.py
 import json
 import re
-from typing import Any
+from typing import Any, Union
 
-def safe_json_parse(raw_text: str) -> Any:
+def safe_json_parse(raw: Union[str, dict, list, None]) -> Any:
     """
-    Robust JSON parsing:
-    - Strip control chars
-    - Normalize escaped quotes
-    - Collapse newlines
-    - Return parsed JSON if possible, else original text wrapped
+    Parses raw input into JSON-safe output.
+    If raw is string, tries to clean it up and load as JSON.
+    If raw is already dict/list, returns it directly.
+    If parsing fails, returns an object with raw content.
     """
-    if raw_text is None:
+    if raw is None:
         return None
-    # Quick attempt
+
+    # If it's already a dict or list, assume it's valid JSON structure
+    if isinstance(raw, (dict, list)):
+        return raw
+
+    # If it's not a string now, convert to string
+    if not isinstance(raw, str):
+        raw_str = str(raw)
+    else:
+        raw_str = raw
+
+    # Try direct json loads
     try:
-        return json.loads(raw_text)
-    except Exception:
-        fixed = raw_text
-    # Normalize
-    fixed = fixed.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
-    fixed = fixed.replace("\\'", "'")
-    fixed = fixed.replace('\\"', '"')
-    fixed = fixed.replace("\\xa0", " ")
-    # Remove other control chars
-    fixed = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", fixed)
-    # Try json again
-    try:
-        return json.loads(fixed)
-    except Exception:
-        # Attempt extraction: if the response contains a JSON substring, extract with regex
-        m = re.search(r"(\{.*\}|\[.*\])", fixed)
-        if m:
-            try:
-                return json.loads(m.group(1))
-            except Exception:
-                pass
-        # Last resort: return original text so caller can treat as plain text
-        return {"__raw_text__": raw_text}
+        return json.loads(raw_str)
+    except json.JSONDecodeError:
+        # Clean up the string
+        fixed = raw_str
+        fixed = fixed.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+        fixed = fixed.replace("\\'", "'")
+        fixed = fixed.replace('\\"', '"')
+        fixed = fixed.replace("\\xa0", " ")
+        # Remove control characters
+        fixed = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", fixed)
+        # Try again
+        try:
+            return json.loads(fixed)
+        except Exception:
+            # Try to extract JSON substring
+            m = re.search(r"(\{.*\}|\[.*\])", fixed)
+            if m:
+                try:
+                    return json.loads(m.group(1))
+                except Exception:
+                    pass
+            # Last resort
+            return {"__raw_text__": raw_str}
+
