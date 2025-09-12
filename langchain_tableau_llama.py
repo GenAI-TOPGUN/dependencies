@@ -1,30 +1,25 @@
 # customlocalmodel.py
 
-import os
+# customlocalmodel.py
+
 import requests
 from typing import List, Optional, Any, Dict
 
-from langchain_core.messages import BaseMessage
+from langchain_core.messages.human import HumanMessage
+from langchain_core.messages.ai import AIMessage
+from langchain_core.messages.base import BaseMessage
 from langchain.chat_models.base import BaseChatModel
-from langchain.schema import AIMessage
 from langchain.schema import ChatResult, ChatGeneration
 
 class CustomLlamaEndpointChat(BaseChatModel):
-    """Custom chat model using a LLaMA endpoint with custom headers"""
+    """Custom chat model using a LLaMA endpoint with custom headers, with hardcoded settings."""
 
-    def __init__(
-        self,
-        endpoint_url: str,
-        api_key: str,
-        auth_group: Optional[str] = None,
-        model_name: Optional[str] = None,
-        temperature: float = 0.7,
-    ):
-        self.endpoint_url = endpoint_url
-        self.api_key = api_key
-        self.auth_group = auth_group
-        self.model_name = model_name
-        self.temperature = temperature
+    # Hardcoded values
+    endpoint_url: str = "https://your-llama-endpoint.example.com/v1/chat/completions"
+    api_key: str = "YOUR_API_KEY_HERE"
+    auth_group: Optional[str] = "YOUR_AUTH_GROUP_IF_ANY"
+    model_name: str = "llama-custom-model-name"
+    temperature: float = 0.7
 
     @property
     def _llm_type(self) -> str:
@@ -47,16 +42,26 @@ class CustomLlamaEndpointChat(BaseChatModel):
         **kwargs: Any
     ) -> ChatResult:
         """
-        Sends request to LLaMA endpoint. Builds payload from messages.
-        Returns a ChatResult as required by BaseChatModel.
+        Fixed‐parameter version. Build payload from messages (using type to identify role),
+        send request with hardcoded endpoint & headers.
         """
 
-        # Build payload
+        def message_to_role_content(m: BaseMessage) -> Dict[str, str]:
+            # LangChain messages have .type instead of .role
+            # .type is one of: "human", "ai", "system", etc.
+            msg_type = getattr(m, "type", None)
+            if msg_type == "human":
+                role = "user"
+            elif msg_type == "ai":
+                role = "assistant"
+            else:
+                # fallback: m.type or default to "user"
+                role = msg_type or "user"
+            return {"role": role, "content": m.content}
+
         payload = {
             "model": self.model_name,
-            "messages": [
-                {"role": m.role, "content": m.content} for m in messages
-            ],
+            "messages": [message_to_role_content(m) for m in messages],
             "temperature": self.temperature,
         }
         if stop:
@@ -74,19 +79,15 @@ class CustomLlamaEndpointChat(BaseChatModel):
         resp.raise_for_status()
         j = resp.json()
 
-        # Extract content -- customize depending on what your LLaMA API returns
-        # Example assumption: {"choices": [{"message": {"content": ...}}]}
+        # Extract content; adapt if your endpoint schema differs
         try:
             content = j["choices"][0]["message"]["content"]
         except Exception:
-            # fallback options
             content = j.get("response") or j.get("output") or str(j)
 
         ai_msg = AIMessage(content=content)
-
         gen = ChatGeneration(message=ai_msg)
         return ChatResult(generations=[gen], llm_output=j)
-
 
 #-----
 # in models.py
