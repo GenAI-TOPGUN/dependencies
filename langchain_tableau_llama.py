@@ -110,3 +110,47 @@ def select_model(provider: str = "openai", model_name: str = None, temperature: 
 
 
 #----
+
+
+#json_load fix py
+
+# backend/json_normalizer.py
+import json
+import re
+from typing import Any
+
+def safe_json_parse(raw_text: str) -> Any:
+    """
+    Robust JSON parsing:
+    - Strip control chars
+    - Normalize escaped quotes
+    - Collapse newlines
+    - Return parsed JSON if possible, else original text wrapped
+    """
+    if raw_text is None:
+        return None
+    # Quick attempt
+    try:
+        return json.loads(raw_text)
+    except Exception:
+        fixed = raw_text
+    # Normalize
+    fixed = fixed.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+    fixed = fixed.replace("\\'", "'")
+    fixed = fixed.replace('\\"', '"')
+    fixed = fixed.replace("\\xa0", " ")
+    # Remove other control chars
+    fixed = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", fixed)
+    # Try json again
+    try:
+        return json.loads(fixed)
+    except Exception:
+        # Attempt extraction: if the response contains a JSON substring, extract with regex
+        m = re.search(r"(\{.*\}|\[.*\])", fixed)
+        if m:
+            try:
+                return json.loads(m.group(1))
+            except Exception:
+                pass
+        # Last resort: return original text so caller can treat as plain text
+        return {"__raw_text__": raw_text}
