@@ -1,10 +1,30 @@
+# customlocalmodel.py
+
+import os
+import requests
 from typing import List, Optional, Any, Dict
-from langchain_core.schema import BaseMessage, AIMessage, ChatResult, ChatGeneration
+
+from langchain_core.messages import BaseMessage
 from langchain.chat_models.base import BaseChatModel
-# Remove _call if you used: you can keep it or use _generate; both need to align.
+from langchain.schema import AIMessage
+from langchain.schema import ChatResult, ChatGeneration
 
 class CustomLlamaEndpointChat(BaseChatModel):
-    # existing __init__, properties etc...
+    """Custom chat model using a LLaMA endpoint with custom headers"""
+
+    def __init__(
+        self,
+        endpoint_url: str,
+        api_key: str,
+        auth_group: Optional[str] = None,
+        model_name: Optional[str] = None,
+        temperature: float = 0.7,
+    ):
+        self.endpoint_url = endpoint_url
+        self.api_key = api_key
+        self.auth_group = auth_group
+        self.model_name = model_name
+        self.temperature = temperature
 
     @property
     def _llm_type(self) -> str:
@@ -16,7 +36,7 @@ class CustomLlamaEndpointChat(BaseChatModel):
             "endpoint_url": self.endpoint_url,
             "model_name": self.model_name,
             "temperature": self.temperature,
-            "auth_group": self.auth_group
+            "auth_group": self.auth_group,
         }
 
     def _generate(
@@ -27,14 +47,16 @@ class CustomLlamaEndpointChat(BaseChatModel):
         **kwargs: Any
     ) -> ChatResult:
         """
-        Required abstract method: generate a response from the given messages.
-        We'll call the endpoint with custom headers, get the content, 
-        wrap into AIMessage, return ChatResult.
+        Sends request to LLaMA endpoint. Builds payload from messages.
+        Returns a ChatResult as required by BaseChatModel.
         """
-        # Prepare payload
+
+        # Build payload
         payload = {
             "model": self.model_name,
-            "messages": [ {"role": m.role, "content": m.content} for m in messages ],
+            "messages": [
+                {"role": m.role, "content": m.content} for m in messages
+            ],
             "temperature": self.temperature,
         }
         if stop:
@@ -48,21 +70,22 @@ class CustomLlamaEndpointChat(BaseChatModel):
         if self.auth_group:
             headers["X-AUTH-GROUP"] = self.auth_group
 
-        import requests
         resp = requests.post(self.endpoint_url, json=payload, headers=headers, timeout=30)
         resp.raise_for_status()
         j = resp.json()
 
-        # Extract content (adapt if your API uses different fields)
+        # Extract content -- customize depending on what your LLaMA API returns
+        # Example assumption: {"choices": [{"message": {"content": ...}}]}
         try:
             content = j["choices"][0]["message"]["content"]
         except Exception:
+            # fallback options
             content = j.get("response") or j.get("output") or str(j)
 
         ai_msg = AIMessage(content=content)
-        generation = ChatGeneration(message=ai_msg)
-        return ChatResult(generations=[generation], llm_output=j)
 
+        gen = ChatGeneration(message=ai_msg)
+        return ChatResult(generations=[gen], llm_output=j)
 
 
 #-----
