@@ -1,0 +1,128 @@
+{
+  "datasources": [
+    {
+      "id": "1",
+      "name": "Sales Analytics DB",
+      "luid": "ds-sales-analytics-2024-001",
+      "definition": "Comprehensive sales data warehouse containing transactional records, customer information, and product performance metrics from 2020 to present.",
+      "attributes": [
+        {
+          "name": "customer_id",
+          "type": "string",
+          "description": "Unique identifier for each customer"
+        },
+        {
+          "name": "transaction_date",
+          "type": "date",
+          "description": "Date when the transaction occurred"
+        },
+        {
+          "name": "product_name",
+          "type": "string",
+          "description": "Name of the product purchased"
+        },
+        {
+          "name": "revenue",
+          "type": "number",
+          "description": "Total revenue generated from the transaction"
+        },
+        {
+          "name": "quantity",
+          "type": "number",
+          "description": "Number of units sold"
+        },
+        {
+          "name": "region",
+          "type": "string",
+          "description": "Geographic region where the sale occurred"
+        }
+      ]
+    },
+    {
+      "id": "2",
+      "name": "Marketing Campaign DB",
+      "luid": "ds-marketing-campaigns-2024-002",
+      "definition": "Marketing campaign performance data including ad spend, impressions, clicks, conversions, and ROI metrics across all channels.",
+      "attributes": [
+        {
+          "name": "campaign_id",
+          "type": "string",
+          "description": "Unique identifier for each marketing campaign"
+        },
+        {
+          "name": "campaign_name",
+          "type": "string",
+          "description": "Name of the marketing campaign"
+        },
+        {
+          "name": "channel",
+          "type": "string",
+          "description": "Marketing channel (e.g., Email, Social Media, PPC)"
+        },
+        {
+          "name": "ad_spend",
+          "type": "number",
+          "description": "Total amount spent on the campaign"
+        },
+        {
+          "name": "impressions",
+          "type": "number",
+          "description": "Number of times the ad was displayed"
+        },
+        {
+          "name": "clicks",
+          "type": "number",
+          "description": "Number of clicks on the ad"
+        },
+        {
+          "name": "conversions",
+          "type": "number",
+          "description": "Number of conversions generated"
+        },
+        {
+          "name": "roi",
+          "type": "number",
+          "description": "Return on investment percentage"
+        }
+      ]
+    },
+    {
+      "id": "3",
+      "name": "Customer Behavior DB",
+      "luid": "ds-customer-behavior-2024-003",
+      "definition": "Customer interaction and behavioral data including website visits, engagement metrics, purchase history, and customer satisfaction scores.",
+      "attributes": [
+        {
+          "name": "user_id",
+          "type": "string",
+          "description": "Unique identifier for each user"
+        },
+        {
+          "name": "session_duration",
+          "type": "number",
+          "description": "Duration of the user session in seconds"
+        },
+        {
+          "name": "pages_viewed",
+          "type": "number",
+          "description": "Number of pages viewed during the session"
+        },
+        {
+          "name": "bounce_rate",
+          "type": "number",
+          "description": "Percentage of single-page sessions"
+        },
+        {
+          "name": "satisfaction_score",
+          "type": "number",
+          "description": "Customer satisfaction rating (1-10)"
+        },
+        {
+          "name": "segment",
+          "type": "string",
+          "description": "Customer segment category"
+        }
+      ]
+    }
+  ]
+}
